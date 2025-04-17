@@ -1066,3 +1066,154 @@ class FS740:
         See page 123 of the FS740 manual.
         """
         self.write("SYSTem:ALARm:CLEar")
+
+    # --- Timebase Subsystem (Pages 132-138) ---
+
+    def set_timebase_config_bandwidth(self, bandwidth: str) -> None:
+        """Sets the timebase bandwidth.
+
+        Sends the command:
+            TBASe:CONFig:BWIDth <value>
+        where <value> is the desired bandwidth. This command configures the bandwidth of the timebase.
+
+        Args:
+            bandwidth (str): The desired bandwidth, either AUTo or MANual.
+
+        See page 132 of the FS740 manual.
+        """
+        assert bandwidth.casefold() in ["aut", "man", "auto", "manual"], (
+            "bandwidth must be AUTo or MANual"
+        )
+        self.write(f"TBASe:CONFig:BWIDth {bandwidth}")
+
+    def query_timebase_config_bandwidth(self) -> str:
+        """Queries the timebase bandwidth.
+
+        Sends the command:
+            TBASe:CONFig:BWIDth?
+        The instrument returns a string indicating the current timebase bandwidth.
+
+        Returns:
+            str: AUTo or MANual
+        """
+        return self.query("TBASe:CONFig:BWIDth?")
+
+    def set_timebase_config_hmode(self, hmode: str) -> None:
+        """
+        Set the timebase holdover mode.
+        Sends the command:
+            TBASe:CONFig:HMODE <hmode>
+        where <hmode> is the desired holdover mode. This command configures the holdover mode of the timebase.
+
+        See page 133 of the manual.
+        Args:
+            hmode (str): WAIT, JUMP or SLEW
+        """
+        assert hmode.casefold() in ["wait", "jump", "slew"], (
+            "hmode must be WAIT, JUMP or SLEW"
+        )
+        self.write(f"TBASe:CONFig:HMODE {hmode}")
+
+    def query_timebase_config_hmode(self) -> str:
+        """Queries the timebase holdover mode.
+
+        Sends the command:
+            TBASe:CONFig:HMODE?
+        The instrument returns a string indicating the current holdover mode.
+
+        Returns:
+            str: The current holdover mode (WAIT, JUMP, SLEW).
+
+        See page 133 of the FS740 manual.
+        """
+        return self.query("TBASe:CONFig:HMODE?")
+
+    def set_timebase_config_lock(self, lock: int | bool | str) -> None:
+        """
+        Set the timebase lock status.
+        Sends the command:
+            TBASe:CONFig:LOCK <lock>
+        where <lock> is the desired lock status. This command configures the lock status of the timebase.
+
+        Args:
+            lock (int | bool | str): Lock status, either 0 (unlocked), 1 (locked) or "ON" / "OFF".
+        """
+        if isinstance(lock, (int, bool)):
+            assert lock in [0, 1], "lock must be 0 (unlocked) or 1 (locked)"
+            lock = "ON" if lock else "OFF"
+        else:
+            assert lock in ["ON", "OFF"], (
+                "lock must be 0 (unlocked), 1 (locked), ON or OFF"
+            )
+        self.write(f"TBASe:CONFig:LOCK {lock}")
+
+    def query_timebase_config_lock(self) -> bool:
+        """Queries the timebase lock status.
+
+        Sends the command:
+            TBASe:CONFig:LOCK?
+        The instrument returns a string indicating whether the timebase is locked or unlocked.
+
+        Returns:
+            bool: True if the timebase is locked, False otherwise.
+
+        See page 133 of the FS740 manual.
+        """
+        return bool(int(self.query("TBASe:CONFig:LOCK?")))
+
+    def set_timebase_config_interval_limit(self, limit: float) -> None:
+        """Sets the timebase interval limit.
+
+        Sends the command:
+            TBASe:CONFig:LIMit <limit>
+        where <limit> is the desired interval limit in seconds. This command configures the maximum
+        allowable time interval for the timebase.
+
+        Args:
+            limit (float): The desired interval limit in seconds.
+
+        See page 133 of the FS740 manual.
+        """
+        assert (limit >= 50e-9) and (limit <= 1), (
+            "limit must be >= 50 ns and <= 1 second"
+        )
+        self.write(f"TBASe:CONFig:LIMit {limit}")
+
+    def query_timebase_config_interval_limit(self) -> float:
+        """Queries the timebase interval limit.
+
+        Sends the command:
+            TBASe:CONFig:LIMit?
+        The instrument returns a numeric string indicating the current interval limit.
+
+        Returns:
+            float: The current interval limit in seconds.
+
+        See page 133 of the FS740 manual.
+        """
+        return float(self.query("TBASe:CONFig:LIMit?"))
+
+    def timebase_event_clear(self) -> None:
+        """Clears the timebase event status.
+
+        Sends the command:
+            TBASe:EVENt:CLEar
+        This command resets the timebase event status in the instrument.
+
+        See page 134 of the FS740 manual.
+        """
+        self.write("TBASe:EVENt:CLEar")
+
+    def query_timebase_event_count(self) -> int:
+        """Queries the timebase event count.
+
+        Sends the command:
+            TBASe:EVENt:COUNt?
+        The instrument returns a integer indicating the number of timebase events that have occurred.
+
+        Returns:
+            int: The current timebase event count.
+
+        See page 134 of the FS740 manual.
+        """
+        return int(self.query("TBASe:EVENt:COUNt?"))
