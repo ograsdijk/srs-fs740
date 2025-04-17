@@ -4,6 +4,30 @@ from typing import TypeVar
 T = TypeVar("T", bound=IntFlag)
 
 
+class StandardEventStatus(IntFlag):
+    """Standard Event Status Register as defined on page 84.
+
+    Bit definitions:
+      - Bit 0: Operation Complete
+      - Bit 1: Reserved
+      - Bit 2: Query Error
+      - Bit 3: Device-Dependent Error
+      - Bit 4: Execution Error
+      - Bit 5: Command Error
+      - Bit 6: Reserved
+      - Bit 7: Power On
+    """
+
+    # Define each bit with its corresponding value.
+    # Bits 1 and 6 are reserved, so you may choose to omit or mark them as Reserved.
+    OPC = 1 << 0  # Operation Complete
+    QYE = 1 << 2  # Query Error
+    DDE = 1 << 3  # Device-Dependent Error
+    EXE = 1 << 4  # Execution Error
+    CME = 1 << 5  # Command Error
+    PON = 1 << 7  # Power On
+
+
 class ESR(IntFlag):
     # Define each bit with its corresponding value.
     # Bits 1 and 6 are reserved, so you may choose to omit or mark them as Reserved.
@@ -124,5 +148,5 @@ class GPSReceiverStatus(IntFlag):
 
 
 def get_set_flags(register_value: int, register: T) -> list[T]:
-    set_flags = [flag for flag in register & register_value]
+    set_flags = [flag for flag in register if flag & register_value]
     return set_flags
