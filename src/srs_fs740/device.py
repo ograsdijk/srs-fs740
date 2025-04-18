@@ -576,7 +576,9 @@ class FS740:
 
     # --- Sample Subsystem (Pages 111-112) ---
 
-    def sample_set_count(self, count: int = 1) -> None:
+    def sample_set_count(
+        self, channel: MeasureChannel = MeasureChannel.FRONT, count: int = 1
+    ) -> None:
         """Sets the number of samples to acquire in a measurement.
 
         Sends the command:
@@ -589,7 +591,7 @@ class FS740:
 
         See page 111 of the FS740 manual.
         """
-        self.write(f"SAMPle:COUNt {count}")
+        self.write(f"SAMPle{channel}:COUNt {count}")
 
     def sample_query_count(self) -> int:
         """Queries the current sample count setting.
