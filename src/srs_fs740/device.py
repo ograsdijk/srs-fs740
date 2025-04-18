@@ -574,6 +574,61 @@ class FS740:
         command = f"DATA{channel}:REMove? {count}"
         return self.query(command)
 
+    # -- Input Subsystem (Pages 110-111) ---
+    def set_input_level(
+        self, channel: MeasureChannel = MeasureChannel.FRONT, level: float = 0.0
+    ) -> None:
+        """Sets the input level for the specified channel.
+
+        Sends the command:
+            INPut{channel}:LEVel {level}
+        where {channel} is either 1 (front) or 2 (rear). The <level> parameter specifies the desired input level.
+
+        Args:
+            channel (int): The measurement channel (1 for front, 2 for rear).
+            level (float): The desired input level in volts.
+
+        See page 110 of the FS740 manual.
+        """
+        self.write(f"INPut{channel}:LEVel {level}")
+
+    def query_input_level(
+        self, channel: MeasureChannel = MeasureChannel.FRONT
+    ) -> float:
+        """Queries the current input level for the specified channel.
+
+        Sends the command:
+            INPut{channel}:LEVel?
+        where {channel} is either 1 (front) or 2 (rear). The instrument returns the current input level.
+
+        Args:
+            channel (int): The measurement channel (1 for front, 2 for rear).
+
+        Returns:
+            float: The current input level in volts.
+
+        See page 110 of the FS740 manual.
+        """
+        return float(self.query(f"INPut{channel}:LEVel?"))
+
+    def set_input_slope(
+        self, channel: MeasureChannel = MeasureChannel.FRONT, slope: str = "POS"
+    ) -> None:
+        """Sets the input slope for the specified channel.
+
+        Sends the command:
+            INPut{channel}:SLOPe POSitive
+        where {channel} is either 1 (front) or 2 (rear). The instrument sets the input slope to positive.
+
+        Args:
+            channel (int): The measurement channel (1 for front, 2 for rear).
+            slope (str): The desired slope ("POS" for positive, "NEG" for negative, "DEF" for default ("POS")). Defaults to "POS".
+
+        See page 110 of the FS740 manual.
+        """
+        assert slope in ("POS", "NEG", "DEF"), "slope must be POS, NEG or DEF"
+        self.write(f"INPut{channel}:SLOPe {slope}")
+
     # --- Sample Subsystem (Pages 111-112) ---
 
     def sample_set_count(
