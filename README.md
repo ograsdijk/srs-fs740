@@ -4,7 +4,7 @@ Python helpers for the Stanford Research Systems FS740 time and frequency instru
 
 ## Features
 
-- Connect to an FS740 over VISA/TCPIP
+- Connect to an FS740 over direct TCP/IP
 - Query measurements, status registers, and system state
 - Parse timestamp payloads returned by the instrument
 - Keep instrument commands in a Pythonic interface
@@ -15,8 +15,8 @@ Python helpers for the Stanford Research Systems FS740 time and frequency instru
 uv sync --locked
 ```
 
-The package depends on `numpy` and `pyvisa`. You will also need a VISA backend
-installed on the machine that talks to the instrument.
+The package depends on `numpy` only. It connects directly to the instrument over
+TCP port `5025`, so you do not need a VISA backend.
 
 ## Quick Start
 
