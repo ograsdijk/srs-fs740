@@ -1,8 +1,6 @@
 import math
-from typing import Self, cast
-
-import pyvisa
-from pyvisa.resources import TCPIPSocket
+import socket
+from typing import Protocol, Self, cast
 
 from .config_enums import (
     MeasureChannel,
@@ -30,20 +28,79 @@ def _normalize_choice(value: str, allowed: set[str], label: str) -> str:
     return normalized.upper()
 
 
+def _resolve_target(resource_name: str, port: int) -> tuple[str, int]:
+    if resource_name.startswith("TCPIP") and resource_name.endswith("::SOCKET"):
+        parts = resource_name.split("::")
+        if len(parts) == 4:
+            _, host, parsed_port, _ = parts
+            try:
+                return host, int(parsed_port)
+            except ValueError:
+                pass
+    return resource_name, port
+
+
+class _InstrumentTransport(Protocol):
+    def write(self, cmd: str) -> None: ...
+
+    def query(self, cmd: str) -> str: ...
+
+    def close(self) -> None: ...
+
+
+class _SocketInstrument:
+    def __init__(
+        self, resource_name: str, port: int = 5025, timeout: float | None = 5.0
+    ) -> None:
+        host, port = _resolve_target(resource_name, port)
+        self._socket = socket.create_connection((host, port), timeout)
+        if timeout is not None:
+            self._socket.settimeout(timeout)
+        self._stream = self._socket.makefile("rwb")
+        self._closed = False
+
+    def write(self, cmd: str) -> None:
+        self._stream.write(cmd.encode("ascii") + b"\r\n")
+        self._stream.flush()
+
+    def query(self, cmd: str) -> str:
+        self.write(cmd)
+        response = self._stream.readline()
+        if not response:
+            raise ConnectionError("instrument closed the connection before responding")
+        return response.decode("ascii").rstrip("\r\n")
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._stream.close()
+        finally:
+            self._socket.close()
+
+
 class FS740:
-    def __init__(self, resource_name: str) -> None:
-        rm = pyvisa.ResourceManager()
-        self.instr = cast(
-            TCPIPSocket,
-            rm.open_resource(
-                f"TCPIP0::{resource_name}::5025::SOCKET", read_termination="\r\n"
-            ),
+    def __init__(
+        self,
+        resource_name: str,
+        port: int = 5025,
+        timeout: float | None = 5.0,
+        transport: _InstrumentTransport | None = None,
+    ) -> None:
+        self.instr = (
+            transport
+            if transport is not None
+            else _SocketInstrument(resource_name, port, timeout)
         )
 
     def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc) -> None:
+        self.close()
+
+    def close(self) -> None:
         self.instr.close()
 
     def write(self, cmd: str) -> None:
