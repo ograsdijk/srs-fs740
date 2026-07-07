@@ -17,7 +17,7 @@ while not clock.query_operation_complete():
     pass
 clock.measure_initiate(channel=channel)
 
-data = np.empty(shape=(0, 11), dtype=np.int16)
+data = np.empty(shape=(0, 11), dtype=np.int32)
 while True:
     points_in_memory = clock.data_query_points(channel)
     if not points_in_memory:
