@@ -1,9 +1,6 @@
 import math
-from typing import Self, cast
-from webbrowser import Opera
-
-import pyvisa
-from pyvisa.resources import TCPIPSocket
+import socket
+from typing import Protocol, Self, cast
 
 from .config_enums import (
     MeasureChannel,
@@ -16,7 +13,6 @@ from .helper_functions import (
     validate_parameter_string_min_max_def_inf,
 )
 from .registers import (
-    ESR,
     GPSReceiverStatus,
     OperationStatus,
     QuestionableStatus,
@@ -25,21 +21,86 @@ from .registers import (
 )
 
 
+def _normalize_choice(value: str, allowed: set[str], label: str) -> str:
+    normalized = value.strip().casefold()
+    if normalized not in allowed:
+        raise ValueError(f"{label} must be one of {sorted(allowed)}")
+    return normalized.upper()
+
+
+def _resolve_target(resource_name: str, port: int) -> tuple[str, int]:
+    if resource_name.startswith("TCPIP") and resource_name.endswith("::SOCKET"):
+        parts = resource_name.split("::")
+        if len(parts) == 4:
+            _, host, parsed_port, _ = parts
+            try:
+                return host, int(parsed_port)
+            except ValueError:
+                pass
+    return resource_name, port
+
+
+class _InstrumentTransport(Protocol):
+    def write(self, cmd: str) -> None: ...
+
+    def query(self, cmd: str) -> str: ...
+
+    def close(self) -> None: ...
+
+
+class _SocketInstrument:
+    def __init__(
+        self, resource_name: str, port: int = 5025, timeout: float | None = 5.0
+    ) -> None:
+        host, port = _resolve_target(resource_name, port)
+        self._socket = socket.create_connection((host, port), timeout)
+        if timeout is not None:
+            self._socket.settimeout(timeout)
+        self._stream = self._socket.makefile("rwb")
+        self._closed = False
+
+    def write(self, cmd: str) -> None:
+        self._stream.write(cmd.encode("ascii") + b"\r\n")
+        self._stream.flush()
+
+    def query(self, cmd: str) -> str:
+        self.write(cmd)
+        response = self._stream.readline()
+        if not response:
+            raise ConnectionError("instrument closed the connection before responding")
+        return response.decode("ascii").rstrip("\r\n")
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._stream.close()
+        finally:
+            self._socket.close()
+
+
 class FS740:
-    def __init__(self, resource_name: str) -> None:
-        rm = pyvisa.ResourceManager()
-        self.instr = cast(
-            TCPIPSocket,
-            rm.open_resource(
-                f"TCPIP0::{resource_name}::5025::SOCKET", read_termination="\r\n"
-            ),
+    def __init__(
+        self,
+        resource_name: str,
+        port: int = 5025,
+        timeout: float | None = 5.0,
+        transport: _InstrumentTransport | None = None,
+    ) -> None:
+        self.instr = (
+            transport
+            if transport is not None
+            else _SocketInstrument(resource_name, port, timeout)
         )
 
     def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc) -> None:
-        self.instr.close()
+        self.close()
+
+    def close(self) -> None:
         self.instr.close()
 
     def write(self, cmd: str) -> None:
@@ -202,7 +263,8 @@ class FS740:
 
         See page 93 of the FS740 manual.
         """
-        assert value in (0, 1), "PSC value must be 0 or 1"
+        if value not in (0, 1):
+            raise ValueError("PSC value must be 0 or 1")
         self.write(f"*PSC {value}")
 
     def recall_settings(self, slot: int) -> None:
@@ -217,7 +279,8 @@ class FS740:
 
         See page 93 of the FS740 manual.
         """
-        assert 0 <= slot <= 9, "Slot must be between 0 and 9"
+        if not 0 <= slot <= 9:
+            raise ValueError("Slot must be between 0 and 9")
         self.write(f"*RCL {slot}")
 
     def reset(self) -> None:
@@ -242,7 +305,8 @@ class FS740:
 
         See page 93 of the FS740 manual.
         """
-        assert 1 <= slot <= 9, "Slot must be between 1 and 9"
+        if not 1 <= slot <= 9:
+            raise ValueError("Slot must be between 1 and 9")
         self.write(f"*SAV {slot}")
 
     def service_request_enable(self, value: int) -> None:
@@ -370,7 +434,9 @@ class FS740:
         )
         if len(measured_time) != 11:
             raise ValueError(f"expected 11 values, got {len(measured_time)}")
-        return measured_time
+        return cast(
+            tuple[int, int, int, int, int, int, int, int, int, int, int], measured_time
+        )
 
     def measure_query_config(
         self, channel: MeasureChannel = MeasureChannel.FRONT
@@ -626,7 +692,7 @@ class FS740:
 
         See page 110 of the FS740 manual.
         """
-        assert slope in ("POS", "NEG", "DEF"), "slope must be POS, NEG or DEF"
+        slope = _normalize_choice(slope, {"pos", "neg", "def"}, "slope")
         self.write(f"INPut{channel}:SLOPe {slope}")
 
     # --- Sample Subsystem (Pages 111-112) ---
@@ -648,11 +714,11 @@ class FS740:
         """
         self.write(f"SAMPle{channel}:COUNt {count}")
 
-    def sample_query_count(self) -> int:
+    def sample_query_count(self, channel: MeasureChannel = MeasureChannel.FRONT) -> int:
         """Queries the current sample count setting.
 
         Sends the command:
-            SAMPle:COUNt?
+            SAMPle{channel}:COUNt?
         The instrument returns a integer indicating the number of samples configured
         for measurement.
 
@@ -661,7 +727,7 @@ class FS740:
 
         See page 111 of the FS740 manual.
         """
-        return int(self.query("SAMPle:COUNt?"))
+        return int(self.query(f"SAMPle{channel}:COUNt?"))
 
     # --- Sense Subsystem (Pages 112-113) ---
 
@@ -724,9 +790,8 @@ class FS740:
         if isinstance(timeout, str):
             timeout = validate_parameter_string_min_max_def_inf(timeout)
         else:
-            assert (timeout >= 10e-3) and (timeout <= 2_000), (
-                "timeout must be >= 10 ms and <= 2000 s"
-            )
+            if not (10e-3 <= timeout <= 2_000):
+                raise ValueError("timeout must be >= 10 ms and <= 2000 s")
         self.write(f"SENSe{channel}:FREQuency:TIMEout {timeout}")
 
     def get_sense_frequency_timeout(
@@ -762,7 +827,7 @@ class FS740:
 
         See page 113 of the FS740 manual.
         """
-        assert mode in ("KFIR", "KLAS"), "mode must be KFIR or KLAS"
+        mode = _normalize_choice(mode, {"kfir", "klas"}, "mode")
         self.write(f"SENSe{channel}:TIMe:BUFFer:MODE {mode}")
 
     def get_sense_time_buffer_mode(
@@ -807,8 +872,8 @@ class FS740:
         elif isinstance(frequency, float | int):
             frequency = validate_frequency(frequency, channel)
         else:
-            raise ValueError(
-                "frequency must be a float, int or str, not {type(frequency)}"
+            raise TypeError(
+                f"frequency must be a float, int or str, not {type(frequency)}"
             )
         self.write(f"SOURce{channel}:FREQuency {frequency}")
 
@@ -845,11 +910,13 @@ class FS740:
         See page 115 of the FS740 manual.
         """
         if isinstance(function, str):
-            assert function in ["SIN", "TRI", "SQU", "HMHZ", "IRIG"], (
-                "function must be one of SIN, TRI, SQU, HMHZ or IRIG"
+            function = _normalize_choice(
+                function, {"sin", "tri", "squ", "hmhz", "irig"}, "function"
             )
-        elif not isinstance(function, SourceAuxFunction):
-            raise TypeError("function must be of type str or SourceAuxWaveform")
+        elif isinstance(function, SourceAuxFunction):
+            function = str(function)
+        else:
+            raise TypeError("function must be of type str or SourceAuxFunction")
         self.write(f"SOURce2:FUNCtion {function}")
 
     def get_source_aux_function(self) -> SourceAuxFunction:
@@ -880,9 +947,11 @@ class FS740:
         See page 115 of the FS740 manual.
         """
         if isinstance(function, str):
-            assert function in ["PULS", "IRIG"], "function must be one of PULS or IRIG"
-        elif not isinstance(function, SourcePulseFunction):
-            raise TypeError("function must be of type str or SourcePulseWaveform")
+            function = _normalize_choice(function, {"puls", "irig"}, "function")
+        elif isinstance(function, SourcePulseFunction):
+            function = str(function)
+        else:
+            raise TypeError("function must be of type str or SourcePulseFunction")
         self.write(f"SOURce3:FUNCtion {function}")
 
     def get_source_pulse_function(self) -> SourcePulseFunction:
@@ -919,23 +988,22 @@ class FS740:
 
         See page 115 of the FS740 manual.
         """
+        unit_token = _normalize_choice(unit, {"deg", "rad", "sec"}, "unit")
         if isinstance(phase, str):
             phase = validate_parameter_string_min_max_def_inf(phase)
             if phase == "INF":
                 raise ValueError("phase cannot be INF")
-        elif unit.casefold() == "deg" and isinstance(phase, float | int):
-            assert (phase >= -360) and (phase <= 360), (
-                "phase must be >= -360 and <= 360 degrees"
-            )
-        elif unit.casefold() == "rad" and isinstance(phase, float | int):
-            assert (phase >= -2 * math.pi) and (phase <= 2 * math.pi), (
-                "phase must be >= -2 * pi and <= 2 * pi radians"
-            )
-        elif unit.casefold() == "sec" and isinstance(phase, float | int):
+        elif unit_token == "DEG" and isinstance(phase, (float, int)):
+            if not (-360 <= phase <= 360):
+                raise ValueError("phase must be >= -360 and <= 360 degrees")
+        elif unit_token == "RAD" and isinstance(phase, (float, int)):
+            if not (-2 * math.pi <= phase <= 2 * math.pi):
+                raise ValueError("phase must be >= -2 * pi and <= 2 * pi radians")
+        elif unit_token == "SEC" and isinstance(phase, (float, int)):
             pass
         else:
-            raise ValueError(f"phase must be a float, int or str, not {type(phase)}")
-        self.write(f"SOURce{channel}:PHASe {phase}")
+            raise TypeError(f"phase must be a float, int or str, not {type(phase)}")
+        self.write(f"SOURce{channel}:PHASe {phase},{unit_token}")
 
     def get_source_phase(self, channel: SourceChannel = SourceChannel.SINE) -> float:
         """Queries the current phase setting for the specified source channel.
@@ -971,7 +1039,9 @@ class FS740:
         return GPSReceiverStatus(int(self.query("STATus:GPS:CONDition?")))
 
     def set_status_gps_enable(self, enable: int) -> None:
-        pass
+        if not 0 <= enable <= 0xFFFF:
+            raise ValueError("enable mask must be between 0 and 65535")
+        self.write(f"STATus:GPS:ENABle {enable}")
 
     def query_status_gps_enable(self) -> int:
         """Queries the GPS receiver enable status.
@@ -1018,7 +1088,9 @@ class FS740:
         return OperationStatus(int(self.query("STATus:OPERation:CONDition?")))
 
     def set_status_operation_enable(self, mask: int) -> None:
-        pass
+        if not 0 <= mask <= 0xFFFF:
+            raise ValueError("mask must be between 0 and 65535")
+        self.write(f"STATus:OPERation:ENABle {mask}")
 
     def query_status_operation_enable(self) -> int:
         """Queries the operation status enable mask.
@@ -1065,7 +1137,9 @@ class FS740:
         return QuestionableStatus(int(self.query("STATus:QUEStionable:CONDition?")))
 
     def set_status_questionable_enable(self, mask: int) -> None:
-        pass
+        if not 0 <= mask <= 0xFFFF:
+            raise ValueError("mask must be between 0 and 65535")
+        self.write(f"STATus:QUEStionable:ENABle {mask}")
 
     def query_status_questionable_enable(self) -> int:
         """Queries the questionable status enable mask.
@@ -1138,8 +1212,8 @@ class FS740:
 
         See page 132 of the FS740 manual.
         """
-        assert bandwidth.casefold() in ["aut", "man", "auto", "manual"], (
-            "bandwidth must be AUTo or MANual"
+        bandwidth = _normalize_choice(
+            bandwidth, {"aut", "man", "auto", "manual"}, "bandwidth"
         )
         self.write(f"TBASe:CONFig:BWIDth {bandwidth}")
 
@@ -1166,9 +1240,7 @@ class FS740:
         Args:
             hmode (str): WAIT, JUMP or SLEW
         """
-        assert hmode.casefold() in ["wait", "jump", "slew"], (
-            "hmode must be WAIT, JUMP or SLEW"
-        )
+        hmode = _normalize_choice(hmode, {"wait", "jump", "slew"}, "hmode")
         self.write(f"TBASe:CONFig:HMODE {hmode}")
 
     def query_timebase_config_hmode(self) -> str:
@@ -1196,12 +1268,11 @@ class FS740:
             lock (int | bool | str): Lock status, either 0 (unlocked), 1 (locked) or "ON" / "OFF".
         """
         if isinstance(lock, (int, bool)):
-            assert lock in [0, 1], "lock must be 0 (unlocked) or 1 (locked)"
+            if lock not in [0, 1]:
+                raise ValueError("lock must be 0 (unlocked) or 1 (locked)")
             lock = "ON" if lock else "OFF"
         else:
-            assert lock in ["ON", "OFF"], (
-                "lock must be 0 (unlocked), 1 (locked), ON or OFF"
-            )
+            lock = _normalize_choice(lock, {"on", "off"}, "lock")
         self.write(f"TBASe:CONFig:LOCK {lock}")
 
     def query_timebase_config_lock(self) -> bool:
@@ -1231,9 +1302,8 @@ class FS740:
 
         See page 133 of the FS740 manual.
         """
-        assert (limit >= 50e-9) and (limit <= 1), (
-            "limit must be >= 50 ns and <= 1 second"
-        )
+        if not (50e-9 <= limit <= 1):
+            raise ValueError("limit must be >= 50 ns and <= 1 second")
         self.write(f"TBASe:CONFig:LIMit {limit}")
 
     def query_timebase_config_interval_limit(self) -> float:
