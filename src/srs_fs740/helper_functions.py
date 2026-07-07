@@ -35,14 +35,13 @@ def validate_parameter_string_min_max_def_inf(parameter: str) -> str:
         "infinity": "INF",
     }
 
-    lowered = parameter.casefold()
+    lowered = parameter.strip().casefold()
     if not lowered:
         raise ValueError("Timeout specification cannot be empty")
 
     if lowered in allowed:
         return allowed[lowered]
-    else:
-        raise ValueError(f"Invalid parameter specification: {parameter}")
+    raise ValueError(f"Invalid parameter specification: {parameter}")
 
 
 def validate_frequency(frequency: int | float, channel: SourceChannel) -> int | float:
@@ -70,4 +69,6 @@ def validate_frequency(frequency: int | float, channel: SourceChannel) -> int | 
             raise ValueError(
                 f"Frequency {frequency} is out of range for PULSE channel."
             )
+    else:
+        raise ValueError(f"Unknown source channel: {channel}")
     return frequency
